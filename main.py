@@ -48,7 +48,7 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
     batches = []
     # see if there is any data saved already
     try:
-        df = pd.read_csv(f'data/{quote}/{base}-{quote}.csv')
+        df = pd.read_csv(f'data/{base}-{quote}.csv')
         last_timestamp = df.iloc[-1, 0]
     except FileNotFoundError:
         last_timestamp = 0
@@ -68,7 +68,7 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
 
     if len(batches) > 1:
         df = pd.concat(batches, ignore_index=True)
-        df.to_csv(f'data/{quote}/{base}-{quote}.csv', index=False)
+        df.to_csv(f'data/{base}-{quote}.csv', index=False)
         return True
 
 while True:
