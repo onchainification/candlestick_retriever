@@ -48,7 +48,7 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
         last_timestamp = batches[-1].iloc[-1, 0]
         last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
 
-        print(base, quote, interval, last_datetime)
+        print(base, quote, interval, last_datetime, end='\r', flush=True)
 
     if len(batches) > 0:
         pd.concat(batches, ignore_index=True).to_csv(f'data/{base}-{quote}.csv', index=False)
@@ -56,7 +56,7 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
 
 
 for pair in requests.get('https://api.binance.com/api/v3/exchangeInfo').json()['symbols']:
-    if pair['quoteAsset'] == 'USDT':
+    if pair['quoteAsset'] == 'USDT' and pair['status'] == 'TRADING':
         if all_candles_to_csv(base=pair['baseAsset'], quote=pair['quoteAsset']) is True:
             print(f'Wrote new candles to file for {pair["symbol"]}')
         else:
