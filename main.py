@@ -1,7 +1,7 @@
 import time
-import requests
 from datetime import datetime
 
+import requests
 import pandas as pd
 
 LABELS = [
@@ -37,6 +37,7 @@ def get_batch(symbol, interval, start_time=0, limit=1000):
     if response.status_code == 200:
         return pd.DataFrame(response.json(), columns=LABELS)
     print(f'Got crappy response back: {response}')
+    return False
 
 
 def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
@@ -48,25 +49,29 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
     batches = []
     # see if there is any data saved already
     try:
-        df = pd.read_csv(f'data/{base}-{quote}.csv')
-        last_timestamp = df.iloc[-1, 0]
+        batches.append(pd.read_csv(f'data/{base}-{quote}.csv'))
+        last_timestamp = batches[-1].iloc[-1, 0]
     except FileNotFoundError:
-        last_timestamp = 0
         batches.append(pd.DataFrame([], columns=LABELS))
+        last_timestamp = 0
 
-    last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
+    # gather all batches available, starting from the last timestamp saved or 0
+    # stop if the timestamp that comes back is the same as the last one saved
+    previous_timestamp = None
+    while previous_timestamp != last_timestamp:
+        previous_timestamp = last_timestamp
 
-    # gather all batches available, starting from the last timestamp saved
-    # stop if candlesticks with date of today are reached
-    while last_datetime.strftime('%Y%m%d') < datetime.now().strftime('%Y%m%d'):
         batches.append(get_batch(symbol=base+quote, interval=interval, start_time=last_timestamp))
 
         last_timestamp = batches[-1].iloc[-1, 0]
         last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
 
-        print(base, quote, interval, last_datetime, end='\r', flush=True)
+        covering_spaces = 20 * ' '
+
+        print(base, quote, interval, last_datetime+covering_spaces, end='\r', flush=True)
 
     if len(batches) > 1:
+        # this means new data was gathered; write it to file
         df = pd.concat(batches, ignore_index=True)
         df.to_csv(f'data/{base}-{quote}.csv', index=False)
         return True
