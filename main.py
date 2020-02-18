@@ -5,6 +5,8 @@ from datetime import date, datetime, timedelta
 import requests
 import pandas as pd
 
+API_BASE = 'https://api.binance.com/api/v3/'
+
 LABELS = [
     'open_time',
     'open',
@@ -20,6 +22,8 @@ LABELS = [
     'ignore'
 ]
 
+QUOTE_ASSET = 'BTC'
+
 def get_batch(symbol, interval, start_time=0, limit=1000):
     """get as many candlesticks as possible in one go"""
 
@@ -30,7 +34,7 @@ def get_batch(symbol, interval, start_time=0, limit=1000):
         'limit': limit
     }
     try:
-        response = requests.get('https://api.binance.com/api/v3/klines', params)
+        response = requests.get(f'{API_BASE}klines', params)
     except requests.exceptions.ConnectionError:
         print('Cooling down for 5 mins...')
         time.sleep(5 * 60)
@@ -80,20 +84,30 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
         df = pd.concat(batches, ignore_index=True)
         df.to_csv(f'data/{base}-{quote}.csv', index=False)
         return True
+    return False
 
-if __name__ == '__main__':
+
+def main():
+    """main loop"""
+
     # do a full update on all currency pairs that have BTC as their quote currency
-    for pair in requests.get('https://api.binance.com/api/v3/exchangeInfo').json()['symbols']:
-        if pair['quoteAsset'] == 'BTC':
-            if all_candles_to_csv(base=pair['baseAsset'], quote=pair['quoteAsset']) is True:
-                print(f'Wrote new candles to file for {pair["symbol"]}')
-            else:
-                print(f'Already up to date with {pair["symbol"]}')
+    all_symbols = pd.DataFrame(requests.get(f'{API_BASE}exchangeInfo').json()['symbols'])
+    filtered_base_assets = all_symbols[all_symbols['quoteAsset'] == QUOTE_ASSET]['baseAsset'].values.tolist()
+    n_count = len(filtered_base_assets)
+    for n, base in enumerate(filtered_base_assets):
+        if all_candles_to_csv(base=base, quote=QUOTE_ASSET) is True:
+            print(f'{n+1}/{n_count} Wrote new candles to file for {base}{QUOTE_ASSET}')
+        else:
+            print(f'{n+1}/{n_count} Already up to date with {base}{QUOTE_ASSET}')
 
     # clean the data folder and upload a new version of the dataset to kaggle
     try:
-        os.remove('data/.DS_Storee')
+        os.remove('data/.DS_Store')
     except FileNotFoundError:
         pass
-    YESTERDAY = date.today() - timedelta(days=1)
-    os.system(f'kaggle datasets version -p data/ -m "full update up till {str(YESTERDAY)}"')
+    yesterday = date.today() - timedelta(days=1)
+    os.system(f'kaggle datasets version -p data/ -m "full update up till {str(yesterday)}"')
+
+
+if __name__ == '__main__':
+    main()
