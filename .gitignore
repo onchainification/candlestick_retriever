@@ -1,5 +1,6 @@
 # ignore the data files
-*.csv
+data/*.csv
 
 # macOS junk files
 .DS_Store
+__pycache__
