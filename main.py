@@ -1,5 +1,6 @@
 import os
 import time
+import json
 from datetime import date, datetime, timedelta
 
 import requests
@@ -21,8 +22,6 @@ LABELS = [
     'taker_buy_quote_asset_volume',
     'ignore'
 ]
-
-QUOTE_ASSET = 'BTC'
 
 def get_batch(symbol, interval, start_time=0, limit=1000):
     """get as many candlesticks as possible in one go"""
@@ -77,36 +76,62 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
             last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
 
             covering_spaces = 20 * ' '
-            print(base, quote, interval, str(last_datetime)+covering_spaces, end='\r', flush=True)
+            print(datetime.now(), base, quote, interval, str(last_datetime)+covering_spaces, end='\r', flush=True)
 
     # in the case that new data was gathered write it to a csv file
     if len(batches) > 1:
         df = pd.concat(batches, ignore_index=True)
         df.to_csv(f'data/{base}-{quote}.csv', index=False)
-        return True
-    return False
+        return df.shape[0]
+    return 0
+
+
+def write_metadata(n_count):
+    """write metadata dynamically so we can include a pair count"""
+
+    METADATA = {
+        'id': 'jorijnsmit/binance-full-history',
+        'title': 'Binance Full History',
+        'subtitle': f'1 minute candlesticks for all {n_count} cryptocurrency pairs',
+        'description': """### Introduction\n\nThis is nothing more than a collection of all 1 minute candlesticks on [Binance](https://binance.com). All {n_count} of them are included. Both gathering and uploading the data is fully automated---see [this GitHub repo](https://github.com/gosuto-ai/candlestick_scraper).\n\n### Content\n\nFor every trading pair all fields as returned by [Binance's official API endpoint for historical candlestick data](https://github.com/binance-exchange/binance-official-api-docs/blob/master/rest-api.md#klinecandlestick-data) are saved into their own csv file. First entry is the first timestamp available on the exchange, which is somewhere in 2017 for the longest running pairs.\n\nThe [Getting Started kernel](https://www.kaggle.com/jorijnsmit/getting-started-with-binance-s-candlesticks/) has a quick function that converts each column to its correct data type. It also shows a simple plot of one of the trading pairs with an added indicator and a volume plot.\n\n![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F2234678%2Fb8664e6f26dc84e9a40d5a3d915c9640%2Fdownload.png?generation=1582053879538546&alt=media)\n![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F2234678%2Fcd04ed586b08c1576a7b67d163ad9889%2Fdownload-1.png?generation=1582053899082078&alt=media)\n\n### Inspiration\n\nOne obvious use-case for this data could be general analysis such as adding technical indicators (moving averages, MACD, RSI, etc.) or creating correlation matrices. Other approaches could include backtesting trading algorithms or computing arbitrage potential with other exchanges.\n\n### License\n\nThis data is being collected automatically from cryptocurrency exchange Binance.""",
+        'isPrivate': False,
+        'licenses': [{'name': 'other'}],
+        'keywords': [
+            'finance',
+            'computing',
+            'investing',
+            'currencies and foreign exchange'
+        ],
+        'collaborators': []
+    }
+
+    with open('data/dataset-metadata.json', 'w') as f:
+        json.dump(METADATA, f, indent=4)
 
 
 def main():
     """main loop"""
 
-    # do a full update on all currency pairs that have BTC as their quote currency
+    # do a full update on all currency pairs
     all_symbols = pd.DataFrame(requests.get(f'{API_BASE}exchangeInfo').json()['symbols'])
-    filtered_base_assets = all_symbols[all_symbols['quoteAsset'] == QUOTE_ASSET]['baseAsset'].values.tolist()
-    n_count = len(filtered_base_assets)
-    for n, base in enumerate(filtered_base_assets):
-        if all_candles_to_csv(base=base, quote=QUOTE_ASSET) is True:
-            print(f'{n+1}/{n_count} Wrote new candles to file for {base}{QUOTE_ASSET}')
+    all_pairs = [tuple(x) for x in all_symbols[['baseAsset', 'quoteAsset']].to_records(index=False)]
+    n_count = len(all_pairs)
+    for n, pair in enumerate(all_pairs, 1):
+        base, quote = pair
+        new_lines = all_candles_to_csv(base=base, quote=quote)
+        if new_lines > 0:
+            print(f'{datetime.now()} {n}/{n_count} Wrote {new_lines} new lines to file for {base}-{quote}')
         else:
-            print(f'{n+1}/{n_count} Already up to date with {base}{QUOTE_ASSET}')
+            print(f'{datetime.now()} {n}/{n_count} Already up to date with {base}-{quote}')
 
     # clean the data folder and upload a new version of the dataset to kaggle
     try:
         os.remove('data/.DS_Store')
     except FileNotFoundError:
         pass
+    write_metadata(n_count)
     yesterday = date.today() - timedelta(days=1)
-    os.system(f'kaggle datasets version -p data/ -m "full update up till {str(yesterday)}"')
+    os.system(f'kaggle datasets version -p data/ -m "full update of {n_count} pairs up till {str(yesterday)}"')
 
 
 if __name__ == '__main__':
