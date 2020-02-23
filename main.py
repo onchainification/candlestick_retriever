@@ -55,6 +55,7 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
     try:
         batches.append(pd.read_csv(f'data/{base}-{quote}.csv'))
         last_timestamp = batches[-1].iloc[-1, 0]
+        old_lines = batches[-1].shape[0]
     except FileNotFoundError:
         batches.append(pd.DataFrame([], columns=LABELS))
         last_timestamp = 0
@@ -82,7 +83,7 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
     if len(batches) > 1:
         df = pd.concat(batches, ignore_index=True)
         df.to_csv(f'data/{base}-{quote}.csv', index=False)
-        return df.shape[0]
+        return df.shape[0] - old_lines
     return 0
 
 
