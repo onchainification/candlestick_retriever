@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import random
 from datetime import date, datetime, timedelta
 
 import requests
@@ -50,47 +51,54 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
     concat into a dataframe and write it to csv
     """
 
-    # see if there is any data saved already
-    batches = []
+    # see if there is any data saved on disk already
     try:
-        batches.append(pd.read_csv(f'data/{base}-{quote}.csv'))
-        last_timestamp = batches[-1].iloc[-1, 0]
-        old_lines = batches[-1].shape[0]
+        batches = [pd.read_csv(f'data/{base}-{quote}.csv')]
+        last_timestamp = batches[-1]['open_time'].max()
     except FileNotFoundError:
-        batches.append(pd.DataFrame([], columns=LABELS))
+        batches = [pd.DataFrame([], columns=LABELS)]
         last_timestamp = 0
+    old_lines = len(batches[-1].index)
 
-    # gather all batches available, starting from the last timestamp saved or 0
-    # stop if the timestamp that comes back from the api is the same as the last one saved
+    # gather all candlesticks available, starting from the last timestamp loaded from disk or 0
+    # stop if the timestamp that comes back from the api is the same as the last one
     previous_timestamp = None
     if date.fromtimestamp(last_timestamp / 1000) < date.today():
         while previous_timestamp != last_timestamp:
             previous_timestamp = last_timestamp
 
-            batches.append(get_batch(
+            new_batch = get_batch(
                 symbol=base+quote,
                 interval=interval,
                 start_time=last_timestamp
-            ))
+            )
 
-            last_timestamp = batches[-1].iloc[-1, 0]
+            last_timestamp = new_batch['open_time'].max()
+
+            # sometimes no new trades took place yet on date.today();
+            # in this case the batch is nothing new
+            if previous_timestamp == last_timestamp:
+                break
+
+            batches.append(new_batch)
+
             last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
 
             covering_spaces = 20 * ' '
             print(datetime.now(), base, quote, interval, str(last_datetime)+covering_spaces, end='\r', flush=True)
 
-    # in the case that new data was gathered write it to a csv file
+    # in the case that new data was gathered write it to disk
     if len(batches) > 1:
         df = pd.concat(batches, ignore_index=True)
         df.to_csv(f'data/{base}-{quote}.csv', index=False)
-        return df.shape[0] - old_lines
+        return len(df.index) - old_lines
     return 0
 
 
 def write_metadata(n_count):
     """write metadata dynamically so we can include a pair count"""
 
-    METADATA = {
+    metadata = {
         'id': 'jorijnsmit/binance-full-history',
         'title': 'Binance Full History',
         'subtitle': f'1 minute candlesticks for all {n_count} cryptocurrency pairs',
@@ -107,7 +115,7 @@ def write_metadata(n_count):
     }
 
     with open('data/dataset-metadata.json', 'w') as f:
-        json.dump(METADATA, f, indent=4)
+        json.dump(metadata, f, indent=4)
 
 
 def main():
@@ -116,6 +124,8 @@ def main():
     # do a full update on all currency pairs
     all_symbols = pd.DataFrame(requests.get(f'{API_BASE}exchangeInfo').json()['symbols'])
     all_pairs = [tuple(x) for x in all_symbols[['baseAsset', 'quoteAsset']].to_records(index=False)]
+    # randomising order helps during testing and doesn't make a difference in production
+    random.shuffle(all_pairs)
     n_count = len(all_pairs)
     for n, pair in enumerate(all_pairs, 1):
         base, quote = pair
