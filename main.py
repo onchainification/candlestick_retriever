@@ -72,7 +72,7 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
             new_batch = get_batch(
                 symbol=base+quote,
                 interval=interval,
-                start_time=last_timestamp
+                start_time=last_timestamp+1
             )
 
             last_timestamp = new_batch['open_time'].max()
