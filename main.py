@@ -7,6 +7,8 @@ from datetime import date, datetime, timedelta
 import requests
 import pandas as pd
 
+import preprocessing
+
 API_BASE = 'https://api.binance.com/api/v3/'
 
 LABELS = [
@@ -121,11 +123,14 @@ def write_metadata(n_count):
 def main():
     """main loop"""
 
-    # do a full update on all currency pairs
+    # get all pairs currently available
     all_symbols = pd.DataFrame(requests.get(f'{API_BASE}exchangeInfo').json()['symbols'])
     all_pairs = [tuple(x) for x in all_symbols[['baseAsset', 'quoteAsset']].to_records(index=False)]
-    # randomising order helps during testing and doesn't make a difference in production
+
+    # randomising order helps during testing and doesn't make any difference in production
     random.shuffle(all_pairs)
+
+    # do a full update on all currency pairs
     n_count = len(all_pairs)
     for n, pair in enumerate(all_pairs, 1):
         base, quote = pair
@@ -140,6 +145,7 @@ def main():
         os.remove('data/.DS_Store')
     except FileNotFoundError:
         pass
+    preprocessing.groom_data()
     write_metadata(n_count)
     yesterday = date.today() - timedelta(days=1)
     os.system(f'kaggle datasets version -p data/ -m "full update of {n_count} pairs up till {str(yesterday)}"')
