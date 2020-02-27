@@ -1,3 +1,9 @@
+"""
+Download historical candlestick data for all trading pairs on Binance.com.
+Each trading pair is saved as a csv file to the data folder.
+When done with this (>50GB!) assert integrity of the data and upload it in its entirety to Kaggle.
+"""
+
 import os
 import time
 import json
@@ -65,29 +71,32 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
     # gather all candlesticks available, starting from the last timestamp loaded from disk or 0
     # stop if the timestamp that comes back from the api is the same as the last one
     previous_timestamp = None
-    if date.fromtimestamp(last_timestamp / 1000) < date.today():
-        while previous_timestamp != last_timestamp:
-            previous_timestamp = last_timestamp
 
-            new_batch = get_batch(
-                symbol=base+quote,
-                interval=interval,
-                start_time=last_timestamp+1
-            )
+    while previous_timestamp != last_timestamp:
+        # stop if we reached data from today
+        if date.fromtimestamp(last_timestamp / 1000) >= date.today():
+            break
 
-            last_timestamp = new_batch['open_time'].max()
+        previous_timestamp = last_timestamp
 
-            # sometimes no new trades took place yet on date.today();
-            # in this case the batch is nothing new
-            if previous_timestamp == last_timestamp:
-                break
+        new_batch = get_batch(
+            symbol=base+quote,
+            interval=interval,
+            start_time=last_timestamp+1
+        )
 
-            batches.append(new_batch)
+        last_timestamp = new_batch['open_time'].max()
 
-            last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
+        # sometimes no new trades took place yet on date.today();
+        # in this case the batch is nothing new
+        if previous_timestamp == last_timestamp:
+            break
 
-            covering_spaces = 20 * ' '
-            print(datetime.now(), base, quote, interval, str(last_datetime)+covering_spaces, end='\r', flush=True)
+        batches.append(new_batch)
+        last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
+
+        covering_spaces = 20 * ' '
+        print(datetime.now(), base, quote, interval, str(last_datetime)+covering_spaces, end='\r', flush=True)
 
     # in the case that new data was gathered write it to disk
     if len(batches) > 1:
@@ -116,8 +125,8 @@ def write_metadata(n_count):
         'collaborators': []
     }
 
-    with open('data/dataset-metadata.json', 'w') as f:
-        json.dump(metadata, f, indent=4)
+    with open('data/dataset-metadata.json', 'w') as file:
+        json.dump(metadata, file, indent=4)
 
 
 def main():
