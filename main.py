@@ -101,6 +101,7 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
     # in the case that new data was gathered write it to disk
     if len(batches) > 1:
         df = pd.concat(batches, ignore_index=True)
+        df = preprocessing.quick_clean(df)
         df.to_csv(f'data/{base}-{quote}.csv', index=False)
         return len(df.index) - old_lines
     return 0
@@ -154,7 +155,6 @@ def main():
         os.remove('data/.DS_Store')
     except FileNotFoundError:
         pass
-    preprocessing.groom_data()
     write_metadata(n_count)
     yesterday = date.today() - timedelta(days=1)
     os.system(f'kaggle datasets version -p data/ -m "full update of {n_count} pairs up till {str(yesterday)}"')

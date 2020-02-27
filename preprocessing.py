@@ -33,26 +33,22 @@ def assert_integrity(df):
     """make sure no rows have empty cells or duplicate timestamps exist"""
 
     assert df.isna().all(axis=1).any() == False
-    assert df.index.duplicated().any() == False
+    assert df['open_time'].duplicated().any() == False
 
 
-def quick_clean(df, filename):
+def quick_clean(df):
     """clean a raw dataframe"""
 
-    # convert to proper dtypes, drop dupes
-    df = df.set_index('open_time')
-    dupes = df.index.duplicated().sum()
+    # drop dupes
+    dupes = df['open_time'].duplicated().sum()
     if dupes > 0:
-        df = df[df.index.duplicated() == False]
-        print(f'{datetime.now()} Dropped {dupes} duplicates in {filename}')
+        df = df[df['open_time'].duplicated() == False]
 
     # sort by timestamp, oldest first
     df.sort_values(by=['open_time'], ascending=False)
 
     # just a doublcheck
     assert_integrity(df)
-
-    print(f'{datetime.now()} {filename} is clean')
 
     return df
 
@@ -63,4 +59,4 @@ def groom_data(dirname='data'):
     for filename in os.listdir(dirname):
         if filename.endswith('.csv'):
             full_path = f'{dirname}/{filename}'
-            quick_clean(pd.read_csv(full_path), filename).to_csv(full_path)
+            quick_clean(pd.read_csv(full_path)).to_csv(full_path)
