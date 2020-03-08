@@ -1,8 +1,10 @@
+"""Download historical candlestick data for all trading pairs on Binance.com. All trading pair data
+is checked for integrity, sorted and saved as both a CSV and a Parquet file. The CSV files act as a
+raw buffer on every update round. The Parquet files are much more space efficient (~50GB vs ~10GB)
+and are therefore the files used to upload to Kaggle after each run.
 """
-Download historical candlestick data for all trading pairs on Binance.com.
-Each trading pair is saved as a csv file to the data folder.
-When done with this (>50GB!) assert integrity of the data and upload it in its entirety to Kaggle.
-"""
+
+__author__ = 'Jorijn Jacko Smit'
 
 import os
 import time
@@ -13,7 +15,7 @@ from datetime import date, datetime, timedelta
 import requests
 import pandas as pd
 
-import preprocessing
+import preprocessing as pp
 
 API_BASE = 'https://api.binance.com/api/v3/'
 
@@ -32,8 +34,36 @@ LABELS = [
     'ignore'
 ]
 
-def get_batch(symbol, interval, start_time=0, limit=1000):
-    """get as many candlesticks as possible in one go"""
+METADATA = {
+    'id': 'jorijnsmit/binance-full-history',
+    'title': 'Binance Full History',
+    'isPrivate': False,
+    'licenses': [{'name': 'other'}],
+    'keywords': [
+        'finance',
+        'computer science',
+        'programming',
+        'investing',
+        'currencies and foreign exchange'
+    ],
+    'collaborators': [],
+    'data': []
+}
+
+def write_metadata(n_count):
+    """Write the metadata file dynamically so we can include a pair count."""
+
+    METADATA['subtitle'] = f'1 minute candlesticks for all {n_count} cryptocurrency pairs'
+    METADATA['description'] = f"""### Introduction\n\nThis is a collection of all 1 minute candlesticks of all cryptocurrency pairs on [Binance.com](https://binance.com). All 764 of them are included. Both retrieval and uploading the data is fully automated—see [this GitHub repo](https://github.com/gosuto-ai/candlestick_scraper).\n\n### Content\n\nFor every trading pair, the following fields from [Binance's official API endpoint for historical candlestick data](https://github.com/binance-exchange/binance-official-api-docs/blob/master/rest-api.md#klinecandlestick-data) are saved into each Parquet file:\n\n```\n #   Column                        Dtype         \n---  ------                        --------------    -----         \n 0   open_time                     datetime64[ns]\n 1   open                          float32       \n 2   high                          float32       \n 3   low                           float32       \n 4   close                         float32       \n 5   volume                        float32       \n 6   quote_asset_volume            float32       \n 7   number_of_trades              uint16        \n 8   taker_buy_base_asset_volume   float32       \n 9   taker_buy_quote_asset_volume  float32       \ndtypes: datetime64[ns](1), float32(8), uint16(1)\n```\n\nFirst row starts at the first timestamp available on the exchange, which is July 2017 for the longest running pairs.\n\nHere are two simple plots of one of the trading pairs; one of the close price with an added indicator (MA50) and one of the volume and number of trades:\n\n![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F2234678%2Fb8664e6f26dc84e9a40d5a3d915c9640%2Fdownload.png?generation=1582053879538546&alt=media)\n![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F2234678%2Fcd04ed586b08c1576a7b67d163ad9889%2Fdownload-1.png?generation=1582053899082078&alt=media)\n\n### Inspiration\n\nOne obvious use-case for this data could be general analysis such as adding technical indicators (moving averages, MACD, RSI, etc.) or creating correlation matrices. Other approaches could include backtesting trading algorithms or computing arbitrage potential with other exchanges.\n\n### License\n\nThis data is being collected automatically from cryptocurrency exchange Binance."""
+
+    with open('compressed/dataset-metadata.json', 'w') as file:
+        json.dump(METADATA, file, indent=4)
+
+
+def get_batch(symbol, interval='1m', start_time=0, limit=1000):
+    """Use a GET request to retrieve a batch of candlesticks. Process the JSON into a pandas
+    dataframe and return it. If not successful, return an empty dataframe.
+    """
 
     params = {
         'symbol': symbol,
@@ -50,13 +80,12 @@ def get_batch(symbol, interval, start_time=0, limit=1000):
     if response.status_code == 200:
         return pd.DataFrame(response.json(), columns=LABELS)
     print(f'Got erroneous response back: {response}')
-    return None
+    return pd.DataFrame([])
 
 
-def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
-    """
-    collect a list of candlestick batches with all candlesticks of a trading pair,
-    concat into a dataframe and write it to csv
+def all_candles_to_csv(base, quote, interval='1m'):
+    """Collect a list of candlestick batches with all candlesticks of a trading pair,
+    concat into a dataframe and write it to CSV.
     """
 
     # see if there is any data saved on disk already
@@ -85,6 +114,11 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
             start_time=last_timestamp+1
         )
 
+        # requesting candles from the future returns empty
+        # also stop in case response code was not 200
+        if new_batch.empty:
+            break
+
         last_timestamp = new_batch['open_time'].max()
 
         # sometimes no new trades took place yet on date.today();
@@ -98,40 +132,30 @@ def all_candles_to_csv(base='BTC', quote='USDT', interval='1m'):
         covering_spaces = 20 * ' '
         print(datetime.now(), base, quote, interval, str(last_datetime)+covering_spaces, end='\r', flush=True)
 
+    # write clean version of csv to parquet
+    parquet_name = f'{base}-{quote}.parquet'
+    full_path = f'compressed/{parquet_name}'
+    df = pd.concat(batches, ignore_index=True)
+    df = pp.quick_clean(df)
+    pp.write_raw_to_parquet(df, full_path)
+    METADATA['data'].append({
+        'description': f'All trade history for the pair {base} and {quote} at 1 minute intervals. Counts {df.index.size} records.',
+        'name': parquet_name,
+        'totalBytes': os.stat(full_path).st_size,
+        'columns': []
+    })
+
     # in the case that new data was gathered write it to disk
     if len(batches) > 1:
-        df = pd.concat(batches, ignore_index=True)
-        df = preprocessing.quick_clean(df)
         df.to_csv(f'data/{base}-{quote}.csv', index=False)
         return len(df.index) - old_lines
     return 0
 
 
-def write_metadata(n_count):
-    """write metadata dynamically so we can include a pair count"""
-
-    metadata = {
-        'id': 'jorijnsmit/binance-full-history',
-        'title': 'Binance Full History',
-        'subtitle': f'1 minute candlesticks for all {n_count} cryptocurrency pairs',
-        'description': """### Introduction\n\nThis is nothing more than a collection of all 1 minute candlesticks on [Binance](https://binance.com). All {n_count} of them are included. Both gathering and uploading the data is fully automated---see [this GitHub repo](https://github.com/gosuto-ai/candlestick_scraper).\n\n### Content\n\nFor every trading pair all fields as returned by [Binance's official API endpoint for historical candlestick data](https://github.com/binance-exchange/binance-official-api-docs/blob/master/rest-api.md#klinecandlestick-data) are saved into their own csv file. First entry is the first timestamp available on the exchange, which is somewhere in 2017 for the longest running pairs.\n\nThe [Getting Started kernel](https://www.kaggle.com/jorijnsmit/getting-started-with-binance-s-candlesticks/) has a quick function that converts each column to its correct data type. It also shows a simple plot of one of the trading pairs with an added indicator and a volume plot.\n\n![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F2234678%2Fb8664e6f26dc84e9a40d5a3d915c9640%2Fdownload.png?generation=1582053879538546&alt=media)\n![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F2234678%2Fcd04ed586b08c1576a7b67d163ad9889%2Fdownload-1.png?generation=1582053899082078&alt=media)\n\n### Inspiration\n\nOne obvious use-case for this data could be general analysis such as adding technical indicators (moving averages, MACD, RSI, etc.) or creating correlation matrices. Other approaches could include backtesting trading algorithms or computing arbitrage potential with other exchanges.\n\n### License\n\nThis data is being collected automatically from cryptocurrency exchange Binance.""",
-        'isPrivate': False,
-        'licenses': [{'name': 'other'}],
-        'keywords': [
-            'finance',
-            'computing',
-            'investing',
-            'currencies and foreign exchange'
-        ],
-        'collaborators': []
-    }
-
-    with open('data/dataset-metadata.json', 'w') as file:
-        json.dump(metadata, file, indent=4)
-
-
 def main():
-    """main loop"""
+    """Main loop; loop over all currency pairs that exist on the exchange. Once done upload the
+    compressed (Parquet) dataset to Kaggle.
+    """
 
     # get all pairs currently available
     all_symbols = pd.DataFrame(requests.get(f'{API_BASE}exchangeInfo').json()['symbols'])
@@ -140,7 +164,11 @@ def main():
     # randomising order helps during testing and doesn't make any difference in production
     random.shuffle(all_pairs)
 
-    # do a full update on all currency pairs
+    # make sure data folders exist
+    os.makedirs('data', exist_ok=True)
+    os.makedirs('compressed', exist_ok=True)
+
+    # do a full update on all pairs
     n_count = len(all_pairs)
     for n, pair in enumerate(all_pairs, 1):
         base, quote = pair
@@ -152,12 +180,13 @@ def main():
 
     # clean the data folder and upload a new version of the dataset to kaggle
     try:
-        os.remove('data/.DS_Store')
+        os.remove('compressed/.DS_Store')
     except FileNotFoundError:
         pass
     write_metadata(n_count)
     yesterday = date.today() - timedelta(days=1)
-    os.system(f'kaggle datasets version -p data/ -m "full update of {n_count} pairs up till {str(yesterday)}"')
+    os.system(f'kaggle datasets version -p compressed/ -m "full update of all {n_count} pairs up to {str(yesterday)}"')
+    os.remove('compressed/dataset-metadata.json')
 
 
 if __name__ == '__main__':

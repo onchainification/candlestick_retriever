@@ -29,6 +29,39 @@ def set_dtypes(df):
     return df
 
 
+def set_dtypes_compressed(df):
+    """
+    Create a `DatetimeIndex` and convert all critical columns in pd.df to a
+    dtype with low memory profile.
+    Assumes csv is read raw without modifications; `pd.read_csv(csv_filename)`.
+    """
+
+    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+    df = df.set_index('open_time', drop=True)
+
+    # max trades for BTC-USDT (most popular?) in one minute is 13769
+    # uint16 with a max of 65535 should be enough
+
+    # most values come back with 1e-6 precision from the api so float32 is enough
+    # (only `quote_asset_volume` and `taker_buy_quote_asset_volume` have higher precision)
+
+    # @TODO: some volumes are in ints
+
+    df = df.astype(dtype={
+        'open': 'float32',
+        'high': 'float32',
+        'low': 'float32',
+        'close': 'float32',
+        'volume': 'float32',
+        'number_of_trades': 'uint16',
+        'quote_asset_volume': 'float32',
+        'taker_buy_base_asset_volume': 'float32',
+        'taker_buy_quote_asset_volume': 'float32'
+    })
+
+    return df
+
+
 def assert_integrity(df):
     """make sure no rows have empty cells or duplicate timestamps exist"""
 
@@ -53,6 +86,21 @@ def quick_clean(df):
     return df
 
 
+def write_raw_to_parquet(df, full_path):
+    """takes raw df and writes a parquet to disk"""
+
+    # some candlesticks do not span a full minute
+    # these points are not reliable and thus filtered
+    df = df[~(df['open_time'] - df['close_time'] != -59999)]
+
+    # `close_time` column has become redundant now, as is the column `ignore`
+    df = df.drop(['close_time', 'ignore'], axis=1)
+
+    df = set_dtypes_compressed(df)
+
+    df.to_parquet(full_path)
+
+
 def groom_data(dirname='data'):
     """go through data folder and perform a quick clean on all csv files"""
 
@@ -60,3 +108,18 @@ def groom_data(dirname='data'):
         if filename.endswith('.csv'):
             full_path = f'{dirname}/{filename}'
             quick_clean(pd.read_csv(full_path)).to_csv(full_path)
+
+
+def compress_data(dirname='data'):
+    """go through data folder and rewrite csv files to parquets"""
+
+    os.makedirs('compressed', exist_ok=True)
+    for filename in os.listdir(dirname):
+        if filename.endswith('.csv'):
+            full_path = f'{dirname}/{filename}'
+
+            df = pd.read_csv(full_path)
+
+            new_filename = filename.replace('.csv', '.parquet')
+            new_full_path = f'compressed/{new_filename}'
+            write_raw_to_parquet(df, new_full_path)

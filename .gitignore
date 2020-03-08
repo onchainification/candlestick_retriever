@@ -1,5 +1,6 @@
-# ignore the data files
-data/*.csv
+# ignore the data directories
+data/*
+compressed/*
 
 # macOS junk files
 .DS_Store
