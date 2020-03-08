@@ -1,13 +1,12 @@
 import os
-from datetime import datetime
+from datetime import date
 
 import pandas as pd
 
 def set_dtypes(df):
     """
     set datetimeindex and convert all columns in pd.df to their proper dtype
-    assumes csv is read raw without modifications; pd.read_csv(csv_filename)
-    """
+    assumes csv is read raw without modifications; pd.read_csv(csv_filename)"""
 
     df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
     df = df.set_index('open_time', drop=True)
@@ -30,22 +29,11 @@ def set_dtypes(df):
 
 
 def set_dtypes_compressed(df):
-    """
-    Create a `DatetimeIndex` and convert all critical columns in pd.df to a
-    dtype with low memory profile.
-    Assumes csv is read raw without modifications; `pd.read_csv(csv_filename)`.
-    """
+    """Create a `DatetimeIndex` and convert all critical columns in pd.df to a dtype with low
+    memory profile. Assumes csv is read raw without modifications; `pd.read_csv(csv_filename)`."""
 
     df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
     df = df.set_index('open_time', drop=True)
-
-    # max trades for BTC-USDT (most popular?) in one minute is 13769
-    # uint16 with a max of 65535 should be enough
-
-    # most values come back with 1e-6 precision from the api so float32 is enough
-    # (only `quote_asset_volume` and `taker_buy_quote_asset_volume` have higher precision)
-
-    # @TODO: some volumes are in ints
 
     df = df.astype(dtype={
         'open': 'float32',
@@ -97,6 +85,9 @@ def write_raw_to_parquet(df, full_path):
     df = df.drop(['close_time', 'ignore'], axis=1)
 
     df = set_dtypes_compressed(df)
+
+    # give all pairs the same nice cut-off
+    df = df[df.index < str(date.today())]
 
     df.to_parquet(full_path)
 
