@@ -6,10 +6,11 @@ and are therefore the files used to upload to Kaggle after each run.
 
 __author__ = 'GOSUTO.AI'
 
-import os
-import time
 import json
+import os
 import random
+import subprocess
+import time
 from datetime import date, datetime, timedelta
 
 import requests
