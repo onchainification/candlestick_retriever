@@ -1,7 +1,11 @@
-"""Download historical candlestick data for all trading pairs on Binance.com. All trading pair data
-is checked for integrity, sorted and saved as both a CSV and a Parquet file. The CSV files act as a
-raw buffer on every update round. The Parquet files are much more space efficient (~50GB vs ~10GB)
-and are therefore the files used to upload to Kaggle after each run.
+#!/usr/bin/env python
+# coding: utf-8
+
+"""Download historical candlestick data for all trading pairs on Binance.com.
+All trading pair data is checked for integrity, sorted and saved as both a CSV
+and a Parquet file. The CSV files act as a raw buffer on every update round.
+The Parquet files are much more space efficient (~50GB vs ~10GB) and are
+therefore the files used to upload to Kaggle after each run.
 """
 
 __author__ = 'GOSUTO.AI'
@@ -41,11 +45,10 @@ METADATA = {
     'isPrivate': False,
     'licenses': [{'name': 'other'}],
     'keywords': [
+        'business',
         'finance',
         'investing',
-        'commodities and futures trading',
-        'currencies and foreign exchange',
-        'stocks and bonds',
+        'currencies and foreign exchange'
     ],
     'collaborators': [],
     'data': []
@@ -186,7 +189,7 @@ def main():
         pass
     write_metadata(n_count)
     yesterday = date.today() - timedelta(days=1)
-    subprocess.run(['kaggle', f'datasets version -p compressed/ -m "full update of all {n_count} pairs up to {str(yesterday)}"'])
+    subprocess.run(['kaggle', 'datasets', 'version', '-p', 'compressed/', '-m', f'full update of all {n_count} pairs up to {str(yesterday)}'])
     os.remove('compressed/dataset-metadata.json')
 
 
