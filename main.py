@@ -182,6 +182,14 @@ def main():
         else:
             print(f'{datetime.now()} {n}/{n_count} Already up to date with {base}-{quote}')
 
+    # remove smallest files so that exactly 1000 are left (kaggle's file count limit)
+    dataset = []
+    for file in os.listdir('compressed/'):
+        dataset.append([file, os.stat(f'compressed/{file}').st_size])
+    overflow = pd.DataFrame(dataset).sort_values(1, ascending=False).iloc[1001:,0].tolist()
+    for filename in overflow:
+        os.remove(f'compressed/{filename}')
+
     # clean the data folder and upload a new version of the dataset to kaggle
     try:
         os.remove('compressed/.DS_Store')
