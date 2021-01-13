@@ -78,9 +78,20 @@ def get_batch(symbol, interval='1m', start_time=0, limit=1000):
     try:
         response = requests.get(f'{API_BASE}klines', params)
     except requests.exceptions.ConnectionError:
-        print('Cooling down for 5 mins...')
+        print('Connection error, Cooling down for 5 mins...')
         time.sleep(5 * 60)
         return get_batch(symbol, interval, start_time, limit)
+    
+    except requests.exceptions.Timeout:
+        print('Timeout, Cooling down for 5 min...')
+        time.sleep(5 * 60)
+        return get_batch(symbol, interval, start_time, limit)
+    
+    except requests.exceptions.ConnectionResetError:
+        print('Connection reset by peer, Cooling down for 5 min...')
+        time.sleep(5 * 60)
+        return get_batch(symbol, interval, start_time, limit)
+
     if response.status_code == 200:
         return pd.DataFrame(response.json(), columns=LABELS)
     print(f'Got erroneous response back: {response}')
