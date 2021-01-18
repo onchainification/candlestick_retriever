@@ -76,7 +76,8 @@ def get_batch(symbol, interval='1m', start_time=0, limit=1000):
         'limit': limit
     }
     try:
-        response = requests.get(f'{API_BASE}klines', params)
+        # timeout should also be given as a parameter to the fonction
+        response = requests.get(f'{API_BASE}klines', params, timeout=30)
     except requests.exceptions.ConnectionError:
         print('Connection error, Cooling down for 5 mins...')
         time.sleep(5 * 60)
