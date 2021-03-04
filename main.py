@@ -16,6 +16,8 @@ import random
 import subprocess
 import time
 from datetime import date, datetime, timedelta
+from progressbar import ProgressBar
+import pyarrow.parquet as pq
 
 import requests
 import pandas as pd
@@ -99,28 +101,19 @@ def get_batch(symbol, interval='1m', start_time=0, limit=1000):
     return pd.DataFrame([])
 
 
-def all_candles_to_csv(base, quote, interval='1m'):
-    """Collect a list of candlestick batches with all candlesticks of a trading pair,
-    concat into a dataframe and write it to CSV.
-    """
-
-    # see if there is any data saved on disk already
-    try:
-        batches = [pd.read_csv(f'data/{base}-{quote}.csv')]
-        last_timestamp = batches[-1]['open_time'].max()
-    except FileNotFoundError:
-        batches = [pd.DataFrame([], columns=LABELS)]
-        last_timestamp = 0
-    old_lines = len(batches[-1].index)
-
+def gather_new_candles(base, quote, last_timestamp, interval='1m'):
     # gather all candlesticks available, starting from the last timestamp loaded from disk or 0
     # stop if the timestamp that comes back from the api is the same as the last one
     previous_timestamp = None
+    batches = [pd.DataFrame([], columns=LABELS)]
+
+    limit = 1000
+    first_read = True
+    start_datetime = None
+    bar = None
 
     while previous_timestamp != last_timestamp:
-        # stop if we reached data from today
-        if date.fromtimestamp(last_timestamp / 1000) >= date.today():
-            break
+        last_timestamp_date = date.fromtimestamp(last_timestamp / 1000)
 
         previous_timestamp = last_timestamp
 
@@ -129,13 +122,30 @@ def all_candles_to_csv(base, quote, interval='1m'):
             interval=interval,
             start_time=last_timestamp+1
         )
-
         # requesting candles from the future returns empty
         # also stop in case response code was not 200
         if new_batch.empty:
             break
 
+        #Get info for progressbar
+        if first_read:
+            start_time = new_batch['open_time'][0]
+            start_datetime = datetime.fromtimestamp(start_time / 1000)
+            print(f"Reading candles from {start_datetime}")
+            now_datetime = datetime.now()
+            missing_data_timedelta = now_datetime - start_datetime
+            print(f"Will read {missing_data_timedelta} worth of candles.")
+            first_read = False
+            total_minutes_of_data = int(missing_data_timedelta.total_seconds()/60)
+            if total_minutes_of_data > limit*2:
+                bar = ProgressBar(max_value=total_minutes_of_data)
+
+
         last_timestamp = new_batch['open_time'].max()
+
+        if bar is not None:
+            time_covered = datetime.fromtimestamp(last_timestamp / 1000) - start_datetime
+            bar.update(int(time_covered.total_seconds()/60))
 
         # sometimes no new trades took place yet on date.today();
         # in this case the batch is nothing new
@@ -145,27 +155,69 @@ def all_candles_to_csv(base, quote, interval='1m'):
         batches.append(new_batch)
         last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
 
-        covering_spaces = 20 * ' '
-        print(datetime.now(), base, quote, interval, str(last_datetime)+covering_spaces, end='\r', flush=True)
+    return batches
 
-    # write clean version of csv to parquet
-    parquet_name = f'{base}-{quote}.parquet'
+
+def get_csv_info(filepath):
+    try:
+        batches = [pd.read_csv(filepath)]
+        last_timestamp = batches[-1]['open_time'].max()
+    except FileNotFoundError:
+        batches = [pd.DataFrame([], columns=LABELS)]
+        last_timestamp = 0
+    old_lines = len(batches[-1].index)
+    return last_timestamp, batches, old_lines
+
+
+def get_parquet_info(filepath):
+    try:
+        existing_data = pq.read_pandas(filepath).to_pandas()
+        last_timestamp = existing_data.index.max().timestamp()
+    except FileNotFoundError:
+        existing_data = pd.DataFrame([], columns=LABELS)
+        last_timestamp = 0
+    old_lines = len(existing_data.index)
+    return last_timestamp, [existing_data], old_lines
+
+
+def all_candles_to_csv(base, quote, interval='1m'):
+    """Collect a list of candlestick batches with all candlesticks of a trading pair,
+    concat into a dataframe and write it to CSV.
+    """
+    filepath = f'data/{base}-{quote}.csv'
+
+    last_timestamp, batches, old_lines = get_csv_info(filepath)
+    batches = batches.append(gather_new_candles(base, quote, last_timestamp, interval))
+    return write_to_csv(batches)
+
+def all_candles_to_parquet(base, quote, interval='1m'):
+    filepath = f'compressed/{base}-{quote}.parquet'
+
+def write_to_csv(file, batches):
+    if len(batches) > 1:
+        df = batches_to_pd(batches)
+        df.to_csv(file, index=False)
+        return len(df.index) - old_lines
+    return 0
+
+
+def batches_to_pd(batches):
+    df = pd.concat(batches, ignore_index=True)
+    return pp.quick_clean(df)
+
+
+def write_to_parquet(file, batches):
     full_path = f'compressed/{parquet_name}'
     df = pd.concat(batches, ignore_index=True)
     df = pp.quick_clean(df)
     pp.write_raw_to_parquet(df, full_path)
     METADATA['data'].append({
-        'description': f'All trade history for the pair {base} and {quote} at 1 minute intervals. Counts {df.index.size} records.',
+        'description': f'All trade history for the pair {base} and {quote} at 1 minute intervals. '
+                       f'Counts {df.index.size} records.',
         'name': parquet_name,
         'totalBytes': os.stat(full_path).st_size,
         'columns': []
     })
-
-    # in the case that new data was gathered write it to disk
-    if len(batches) > 1:
-        df.to_csv(f'data/{base}-{quote}.csv', index=False)
-        return len(df.index) - old_lines
-    return 0
 
 
 def main():
@@ -176,6 +228,7 @@ def main():
     # get all pairs currently available
     all_symbols = pd.DataFrame(requests.get(f'{API_BASE}exchangeInfo').json()['symbols'])
     all_pairs = [tuple(x) for x in all_symbols[['baseAsset', 'quoteAsset']].to_records(index=False)]
+    print(f'{datetime.now()} Got {len(all_pairs)} pairs from binance.')
 
     # randomising order helps during testing and doesn't make any difference in production
     random.shuffle(all_pairs)
@@ -188,11 +241,13 @@ def main():
     n_count = len(all_pairs)
     for n, pair in enumerate(all_pairs, 1):
         base, quote = pair
+        print(f'{datetime.now()} {n}/{n_count} Updating {base}-{quote}')
         new_lines = all_candles_to_csv(base=base, quote=quote)
         if new_lines > 0:
             print(f'{datetime.now()} {n}/{n_count} Wrote {new_lines} new lines to file for {base}-{quote}')
         else:
             print(f'{datetime.now()} {n}/{n_count} Already up to date with {base}-{quote}')
+        break
 
     # clean the data folder and upload a new version of the dataset to kaggle
     try:
