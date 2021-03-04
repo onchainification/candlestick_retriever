@@ -2,10 +2,14 @@
 # coding: utf-8
 
 """Download historical candlestick data for all trading pairs on Binance.com.
-All trading pair data is checked for integrity, sorted and saved as both a CSV
-and a Parquet file. The CSV files act as a raw buffer on every update round.
+All trading pair data is checked for integrity, sorted and saved as a Parquet
+file and optionally as a CSV file.
 The Parquet files are much more space efficient (~50GB vs ~10GB) and are
 therefore the files used to upload to Kaggle after each run.
+
+It is possible to circumvent the need for CSV buffers and update the parquet
+files directly by setting CIRCUMVENT_CSV to True. This makes it easy to keep
+the parquet files up to date after you have downloaded them from kaggle.
 """
 
 __author__ = 'GOSUTO.AI'
@@ -18,11 +22,14 @@ import time
 from datetime import date, datetime, timedelta
 from progressbar import ProgressBar
 import pyarrow.parquet as pq
-
 import requests
 import pandas as pd
-
 import preprocessing as pp
+
+BATCH_SIZE = 1000  # Number of candles to ask for in each API request.
+SHAVE_OFF_TODAY = False  # Whether to shave off all candles after last midnight to equalize all datasets.
+CIRCUMVENT_CSV = True  # Whether to use the parquet files directly when updating data.
+UPLOAD_TO_KAGGLE = False  # Whether to upload the parquet files to kaggle after updating.
 
 API_BASE = 'https://api.binance.com/api/v3/'
 
@@ -107,20 +114,18 @@ def gather_new_candles(base, quote, last_timestamp, interval='1m'):
     previous_timestamp = None
     batches = [pd.DataFrame([], columns=LABELS)]
 
-    limit = 1000
     first_read = True
     start_datetime = None
     bar = None
-
+    print(f"Last timestamp of pair {base}-{quote} was {datetime.fromtimestamp(last_timestamp / 1000)}.")
     while previous_timestamp != last_timestamp:
-        last_timestamp_date = date.fromtimestamp(last_timestamp / 1000)
-
         previous_timestamp = last_timestamp
 
         new_batch = get_batch(
             symbol=base+quote,
             interval=interval,
-            start_time=last_timestamp+1
+            start_time=last_timestamp+1,
+            limit=BATCH_SIZE
         )
         # requesting candles from the future returns empty
         # also stop in case response code was not 200
@@ -131,18 +136,16 @@ def gather_new_candles(base, quote, last_timestamp, interval='1m'):
         if first_read:
             start_time = new_batch['open_time'][0]
             start_datetime = datetime.fromtimestamp(start_time / 1000)
-            print(f"Reading candles from {start_datetime}")
             now_datetime = datetime.now()
             missing_data_timedelta = now_datetime - start_datetime
-            print(f"Will read {missing_data_timedelta} worth of candles.")
+            total_minutes_of_data = int(missing_data_timedelta.total_seconds()/60)
+            print(f"Will read {missing_data_timedelta} ({total_minutes_of_data} minutes) worth of candles.")
             first_read = False
             total_minutes_of_data = int(missing_data_timedelta.total_seconds()/60)
-            if total_minutes_of_data > limit*2:
+            if total_minutes_of_data > BATCH_SIZE*2:
                 bar = ProgressBar(max_value=total_minutes_of_data)
 
-
         last_timestamp = new_batch['open_time'].max()
-
         if bar is not None:
             time_covered = datetime.fromtimestamp(last_timestamp / 1000) - start_datetime
             bar.update(int(time_covered.total_seconds()/60))
@@ -153,31 +156,9 @@ def gather_new_candles(base, quote, last_timestamp, interval='1m'):
             break
 
         batches.append(new_batch)
-        last_datetime = datetime.fromtimestamp(last_timestamp / 1000)
+        break #TODO: Remember to remove
 
     return batches
-
-
-def get_csv_info(filepath):
-    try:
-        batches = [pd.read_csv(filepath)]
-        last_timestamp = batches[-1]['open_time'].max()
-    except FileNotFoundError:
-        batches = [pd.DataFrame([], columns=LABELS)]
-        last_timestamp = 0
-    old_lines = len(batches[-1].index)
-    return last_timestamp, batches, old_lines
-
-
-def get_parquet_info(filepath):
-    try:
-        existing_data = pq.read_pandas(filepath).to_pandas()
-        last_timestamp = existing_data.index.max().timestamp()
-    except FileNotFoundError:
-        existing_data = pd.DataFrame([], columns=LABELS)
-        last_timestamp = 0
-    old_lines = len(existing_data.index)
-    return last_timestamp, [existing_data], old_lines
 
 
 def all_candles_to_csv(base, quote, interval='1m'):
@@ -186,17 +167,66 @@ def all_candles_to_csv(base, quote, interval='1m'):
     """
     filepath = f'data/{base}-{quote}.csv'
 
-    last_timestamp, batches, old_lines = get_csv_info(filepath)
-    batches = batches.append(gather_new_candles(base, quote, last_timestamp, interval))
-    return write_to_csv(batches)
+    last_timestamp, old_lines = get_csv_info(filepath)
+    new_candle_batches = gather_new_candles(base, quote, last_timestamp, interval)
+    return write_to_csv(filepath, new_candle_batches, old_lines)
+
 
 def all_candles_to_parquet(base, quote, interval='1m'):
     filepath = f'compressed/{base}-{quote}.parquet'
 
-def write_to_csv(file, batches):
-    if len(batches) > 1:
+    last_timestamp, old_lines = get_parquet_info(filepath)
+    new_candle_batches = gather_new_candles(base, quote, last_timestamp, interval)
+    return write_to_parquet(filepath, new_candle_batches, base, quote, append=True)
+
+
+def get_csv_info(filepath):
+    last_timestamp = 0
+    old_lines = 0
+    try:
+        batches = [pd.read_csv(filepath)]
+        last_timestamp = batches[-1]['open_time'].max()
+        old_lines = len(batches[-1].index)
+    except FileNotFoundError:
+        pass
+    return last_timestamp, old_lines
+
+
+def get_parquet_info(filepath):
+    last_timestamp = 0
+    old_lines = 0
+    try:
+        existing_data = pq.read_pandas(filepath).to_pandas()
+        if not existing_data.empty:
+            last_timestamp = int(existing_data.index.max().timestamp()*1000)
+            old_lines = len(existing_data.index)
+    except OSError:
+        pass
+    return last_timestamp, old_lines
+
+
+def write_to_parquet(file, batches, base, quote, append=False):
+    df = pd.concat(batches, ignore_index=True)
+    df = pp.quick_clean(df)
+    if append:
+        pp.append_raw_to_parquet(df, file)
+    else:
+        pp.write_raw_to_parquet(df, file)
+    METADATA['data'].append({
+        'description': f'All trade history for the pair {base} and {quote} at 1 minute intervals. '
+                       f'Counts {df.index.size} records.',
+        'name': f"{base}-{quote}",
+        'totalBytes': os.stat(file).st_size,
+        'columns': []
+    })
+    return len(df.index)
+
+
+def write_to_csv(file, batches, old_lines):
+    if len(batches) > 0:
         df = batches_to_pd(batches)
-        df.to_csv(file, index=False)
+        header = not os.path.isfile(file)
+        df.to_csv(file, index=False, mode='a', header=header)
         return len(df.index) - old_lines
     return 0
 
@@ -206,18 +236,11 @@ def batches_to_pd(batches):
     return pp.quick_clean(df)
 
 
-def write_to_parquet(file, batches):
-    full_path = f'compressed/{parquet_name}'
-    df = pd.concat(batches, ignore_index=True)
-    df = pp.quick_clean(df)
-    pp.write_raw_to_parquet(df, full_path)
-    METADATA['data'].append({
-        'description': f'All trade history for the pair {base} and {quote} at 1 minute intervals. '
-                       f'Counts {df.index.size} records.',
-        'name': parquet_name,
-        'totalBytes': os.stat(full_path).st_size,
-        'columns': []
-    })
+def csv_to_parquet(base, quote):
+    csv_filepath = f'data/{base}-{quote}.csv'
+    parquet_filepath = f'compressed/{base}-{quote}.parquet'
+    data = [pd.read_csv(csv_filepath)]
+    write_to_parquet(parquet_filepath, data, base, quote)
 
 
 def main():
@@ -231,7 +254,7 @@ def main():
     print(f'{datetime.now()} Got {len(all_pairs)} pairs from binance.')
 
     # randomising order helps during testing and doesn't make any difference in production
-    random.shuffle(all_pairs)
+    #random.shuffle(all_pairs)
 
     # make sure data folders exist
     os.makedirs('data', exist_ok=True)
@@ -242,22 +265,26 @@ def main():
     for n, pair in enumerate(all_pairs, 1):
         base, quote = pair
         print(f'{datetime.now()} {n}/{n_count} Updating {base}-{quote}')
-        new_lines = all_candles_to_csv(base=base, quote=quote)
+        if CIRCUMVENT_CSV:
+            new_lines = all_candles_to_parquet(base=base, quote=quote)
+        else:
+            new_lines = all_candles_to_csv(base=base, quote=quote)
         if new_lines > 0:
             print(f'{datetime.now()} {n}/{n_count} Wrote {new_lines} new lines to file for {base}-{quote}')
         else:
             print(f'{datetime.now()} {n}/{n_count} Already up to date with {base}-{quote}')
-        break
+        break #TODO: Remember to remove
 
-    # clean the data folder and upload a new version of the dataset to kaggle
-    try:
-        os.remove('compressed/.DS_Store')
-    except FileNotFoundError:
-        pass
-    write_metadata(n_count)
-    yesterday = date.today() - timedelta(days=1)
-    subprocess.run(['kaggle', 'datasets', 'version', '-p', 'compressed/', '-m', f'full update of all {n_count} pairs up to {str(yesterday)}'])
-    os.remove('compressed/dataset-metadata.json')
+    if UPLOAD_TO_KAGGLE:
+        # clean the data folder and upload a new version of the dataset to kaggle
+        try:
+            os.remove('compressed/.DS_Store')
+        except FileNotFoundError:
+            pass
+        write_metadata(n_count)
+        yesterday = date.today() - timedelta(days=1)
+        subprocess.run(['kaggle', 'datasets', 'version', '-p', 'compressed/', '-m', f'full update of all {n_count} pairs up to {str(yesterday)}'])
+        os.remove('compressed/dataset-metadata.json')
 
 
 if __name__ == '__main__':
