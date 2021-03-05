@@ -25,13 +25,14 @@ import pyarrow.parquet as pq
 import requests
 import pandas as pd
 import preprocessing as pp
+in_pycharm = "PYCHARM_HOSTED" in os.environ
 
 BATCH_SIZE = 1000  # Number of candles to ask for in each API request.
 SHAVE_OFF_TODAY = False  # Whether to shave off candles after last midnight to equalize end-time of all datasets.
 CIRCUMVENT_CSV = True  # Whether to use the parquet files directly when updating data.
 UPLOAD_TO_KAGGLE = False  # Whether to upload the parquet files to kaggle after updating.
 
-COMPRESSED_PATH = 'compressed'
+COMPRESSED_PATH = r'C:\Users\magla\Documents\Datasets\binance_pairs'
 CSV_PATH = 'data'
 API_BASE = 'https://api.binance.com/api/v3/'
 
@@ -150,14 +151,18 @@ def gather_new_candles(base, quote, last_timestamp, interval='1m'):
             missing_data_timedelta = datetime.now() - start_datetime
             total_minutes_of_data = int(missing_data_timedelta.total_seconds()/60)
             print(f"Will fetch {missing_data_timedelta} ({total_minutes_of_data} minutes) worth of candles.")
+            if in_pycharm: time.sleep(0.2)
             first_read = False
             if total_minutes_of_data >= BATCH_SIZE*2:
                 bar = ProgressBar(max_value=total_minutes_of_data)
 
         if bar is not None:
             time_covered = datetime.fromtimestamp(last_timestamp / 1000) - start_datetime
+            bar.max_value = int((datetime.now() - start_datetime).total_seconds()/60)
             bar.update(int(time_covered.total_seconds()/60))
-
+    if bar is not None:
+        bar.finish()
+    if in_pycharm: time.sleep(0.2)
     return batches
 
 
