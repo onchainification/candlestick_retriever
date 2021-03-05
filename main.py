@@ -31,6 +31,7 @@ BATCH_SIZE = 1000  # Number of candles to ask for in each API request.
 SHAVE_OFF_TODAY = False  # Whether to shave off candles after last midnight to equalize end-time of all datasets.
 CIRCUMVENT_CSV = True  # Whether to use the parquet files directly when updating data.
 UPLOAD_TO_KAGGLE = False  # Whether to upload the parquet files to kaggle after updating.
+SKIP_DELISTED = True
 COMPRESSED_PATH = r'C:\Users\magla\Documents\Datasets\binance_pairs'
 CSV_PATH = 'data'
 
@@ -154,7 +155,7 @@ def gather_new_candles(base, quote, last_timestamp, interval='1m'):
             if in_pycharm: time.sleep(0.2)
             first_read = False
             if total_minutes_of_data >= BATCH_SIZE*2:
-                bar = ProgressBar(max_value=total_minutes_of_data)
+                bar = ProgressBar(max_value=total_minutes_of_data).start()
 
         if bar is not None:
             time_covered = datetime.fromtimestamp(last_timestamp / 1000) - start_datetime
@@ -162,7 +163,7 @@ def gather_new_candles(base, quote, last_timestamp, interval='1m'):
             bar.max_value = max(int((datetime.now() - start_datetime).total_seconds()/60), minutes_covered)
             bar.update(minutes_covered)
     if bar is not None:
-        bar.finish()
+        bar.finish(dirty=True)
     if in_pycharm: time.sleep(0.2)
     return batches
 
@@ -227,9 +228,9 @@ def write_to_parquet(file, batches, base, quote, append=False):
     df = pd.concat(batches, ignore_index=True)
     df = pp.quick_clean(df)
     if append:
-        pp.append_raw_to_parquet(df, file)
+        pp.append_raw_to_parquet(df, file, SHAVE_OFF_TODAY)
     else:
-        pp.write_raw_to_parquet(df, file)
+        pp.write_raw_to_parquet(df, file, SHAVE_OFF_TODAY)
     METADATA['data'].append({
         'description': f'All trade history for the pair {base} and {quote} at 1 minute intervals. '
                        f'Counts {df.index.size} records.',
@@ -269,16 +270,33 @@ def csv_to_parquet(base, quote):
     data = [pd.read_csv(csv_filepath)]
     write_to_parquet(parquet_filepath, data, base, quote)
 
+def print_opts():
+    print("\n#########################################################################################################")
+    print(f"Candle request batch size:         {BATCH_SIZE}")
+    print(f"Equalize dataset ends to midnight: {SHAVE_OFF_TODAY}")
+    print(f"Directly update parquets:          {CIRCUMVENT_CSV}")
+    print(f"Upload parquets to kaggle:         {UPLOAD_TO_KAGGLE}")
+    print(f"Skip update of delisted pairs:     {SKIP_DELISTED}")
+    print(f"Parquet files path:                {COMPRESSED_PATH}")
+    print(f"CSV files path:                    {CSV_PATH}")
+    print("#########################################################################################################\n")
 
 def main():
     """Main loop; loop over all currency pairs that exist on the exchange. Once done upload the
     compressed (Parquet) dataset to Kaggle.
     """
-
+    print_opts()
     # get all pairs currently available
     all_symbols = pd.DataFrame(requests.get(f'{API_BASE}exchangeInfo').json()['symbols'])
-    all_pairs = [tuple(x) for x in all_symbols[['baseAsset', 'quoteAsset']].to_records(index=False)]
-    print(f'{datetime.now()} Got {len(all_pairs)} pairs from binance.')
+    active_symbols = all_symbols.loc[all_symbols["status"] == "TRADING"]
+    if SKIP_DELISTED:
+        all_pairs = [tuple(x) for x in active_symbols[['baseAsset', 'quoteAsset']].to_records(index=False)]
+        n_inactive = len(all_symbols) - len(active_symbols)
+        print(f'{datetime.now()} Got {len(all_pairs)} active pairs from binance. Dropped {n_inactive} inactive pairs.')
+    else:
+        all_pairs = [tuple(x) for x in all_symbols[['baseAsset', 'quoteAsset']].to_records(index=False)]
+        print(f'{datetime.now()} Got {len(all_pairs)} pairs from binance, of which {len(active_symbols)} are active.')
+
 
     # randomising order helps during testing and doesn't make any difference in production
     random.shuffle(all_pairs)
