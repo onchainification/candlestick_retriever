@@ -27,10 +27,12 @@ import pandas as pd
 import preprocessing as pp
 
 BATCH_SIZE = 1000  # Number of candles to ask for in each API request.
-SHAVE_OFF_TODAY = False  # Whether to shave off all candles after last midnight to equalize all datasets.
+SHAVE_OFF_TODAY = False  # Whether to shave off candles after last midnight to equalize end-time of all datasets.
 CIRCUMVENT_CSV = True  # Whether to use the parquet files directly when updating data.
 UPLOAD_TO_KAGGLE = False  # Whether to upload the parquet files to kaggle after updating.
 
+COMPRESSED_PATH = 'compressed'
+CSV_PATH = 'data'
 API_BASE = 'https://api.binance.com/api/v3/'
 
 LABELS = [
@@ -69,7 +71,7 @@ def write_metadata(n_count):
     METADATA['subtitle'] = f'1 minute candlesticks for all {n_count} cryptocurrency pairs'
     METADATA['description'] = f"""### Introduction\n\nThis is a collection of all 1 minute candlesticks of all cryptocurrency pairs on [Binance.com](https://binance.com). All {n_count} of them are included. Both retrieval and uploading the data is fully automated—see [this GitHub repo](https://github.com/gosuto-ai/candlestick_retriever).\n\n### Content\n\nFor every trading pair, the following fields from [Binance's official API endpoint for historical candlestick data](https://github.com/binance-exchange/binance-official-api-docs/blob/master/rest-api.md#klinecandlestick-data) are saved into a Parquet file:\n\n```\n #   Column                        Dtype         \n---  ------                        -----         \n 0   open_time                     datetime64[ns]\n 1   open                          float32       \n 2   high                          float32       \n 3   low                           float32       \n 4   close                         float32       \n 5   volume                        float32       \n 6   quote_asset_volume            float32       \n 7   number_of_trades              uint16        \n 8   taker_buy_base_asset_volume   float32       \n 9   taker_buy_quote_asset_volume  float32       \ndtypes: datetime64[ns](1), float32(8), uint16(1)\n```\n\nThe dataframe is indexed by `open_time` and sorted from oldest to newest. The first row starts at the first timestamp available on the exchange, which is July 2017 for the longest running pairs.\n\nHere are two simple plots based on a single file; one of the opening price with an added indicator (MA50) and one of the volume and number of trades:\n\n![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F2234678%2Fb8664e6f26dc84e9a40d5a3d915c9640%2Fdownload.png?generation=1582053879538546&alt=media)\n![](https://www.googleapis.com/download/storage/v1/b/kaggle-user-content/o/inbox%2F2234678%2Fcd04ed586b08c1576a7b67d163ad9889%2Fdownload-1.png?generation=1582053899082078&alt=media)\n\n### Inspiration\n\nOne obvious use-case for this data could be technical analysis by adding indicators such as moving averages, MACD, RSI, etc. Other approaches could include backtesting trading algorithms or computing arbitrage potential with other exchanges.\n\n### License\n\nThis data is being collected automatically from crypto exchange Binance."""
 
-    with open('compressed/dataset-metadata.json', 'w') as file:
+    with open(f'{COMPRESSED_PATH}/dataset-metadata.json', 'w') as file:
         json.dump(METADATA, file, indent=4)
 
 
@@ -109,8 +111,10 @@ def get_batch(symbol, interval='1m', start_time=0, limit=1000):
 
 
 def gather_new_candles(base, quote, last_timestamp, interval='1m'):
-    # gather all candlesticks available, starting from the last timestamp loaded from disk or 0
-    # stop if the timestamp that comes back from the api is the same as the last one
+    """
+    Gather all candlesticks available, starting from the last timestamp loaded from disk or from beginning of time.
+    Stop if the timestamp that comes back from the api is the same as the last one.
+    """
     previous_timestamp = None
     batches = [pd.DataFrame([], columns=LABELS)]
 
@@ -132,31 +136,27 @@ def gather_new_candles(base, quote, last_timestamp, interval='1m'):
         if new_batch.empty:
             break
 
-        #Get info for progressbar
-        if first_read:
-            start_time = new_batch['open_time'][0]
-            start_datetime = datetime.fromtimestamp(start_time / 1000)
-            now_datetime = datetime.now()
-            missing_data_timedelta = now_datetime - start_datetime
-            total_minutes_of_data = int(missing_data_timedelta.total_seconds()/60)
-            print(f"Will read {missing_data_timedelta} ({total_minutes_of_data} minutes) worth of candles.")
-            first_read = False
-            total_minutes_of_data = int(missing_data_timedelta.total_seconds()/60)
-            if total_minutes_of_data > BATCH_SIZE*2:
-                bar = ProgressBar(max_value=total_minutes_of_data)
-
         last_timestamp = new_batch['open_time'].max()
-        if bar is not None:
-            time_covered = datetime.fromtimestamp(last_timestamp / 1000) - start_datetime
-            bar.update(int(time_covered.total_seconds()/60))
-
         # sometimes no new trades took place yet on date.today();
         # in this case the batch is nothing new
         if previous_timestamp == last_timestamp:
             break
 
         batches.append(new_batch)
-        break #TODO: Remember to remove
+
+        #Get info for progressbar
+        if first_read:
+            start_datetime = datetime.fromtimestamp(new_batch['open_time'][0] / 1000)
+            missing_data_timedelta = datetime.now() - start_datetime
+            total_minutes_of_data = int(missing_data_timedelta.total_seconds()/60)
+            print(f"Will fetch {missing_data_timedelta} ({total_minutes_of_data} minutes) worth of candles.")
+            first_read = False
+            if total_minutes_of_data >= BATCH_SIZE*2:
+                bar = ProgressBar(max_value=total_minutes_of_data)
+
+        if bar is not None:
+            time_covered = datetime.fromtimestamp(last_timestamp / 1000) - start_datetime
+            bar.update(int(time_covered.total_seconds()/60))
 
     return batches
 
@@ -165,7 +165,7 @@ def all_candles_to_csv(base, quote, interval='1m'):
     """Collect a list of candlestick batches with all candlesticks of a trading pair,
     concat into a dataframe and write it to CSV.
     """
-    filepath = f'data/{base}-{quote}.csv'
+    filepath = f'{CSV_PATH}/{base}-{quote}.csv'
 
     last_timestamp, old_lines = get_csv_info(filepath)
     new_candle_batches = gather_new_candles(base, quote, last_timestamp, interval)
@@ -173,7 +173,10 @@ def all_candles_to_csv(base, quote, interval='1m'):
 
 
 def all_candles_to_parquet(base, quote, interval='1m'):
-    filepath = f'compressed/{base}-{quote}.parquet'
+    """Collect a list of candlestick batches with all candlesticks of a trading pair,
+    concat into a dataframe and write it to parquet.
+    """
+    filepath = f'{COMPRESSED_PATH}/{base}-{quote}.parquet'
 
     last_timestamp, old_lines = get_parquet_info(filepath)
     new_candle_batches = gather_new_candles(base, quote, last_timestamp, interval)
@@ -181,6 +184,9 @@ def all_candles_to_parquet(base, quote, interval='1m'):
 
 
 def get_csv_info(filepath):
+    """
+    Reads and returns the last timestamp and number of candles in a csv file.
+    """
     last_timestamp = 0
     old_lines = 0
     try:
@@ -193,6 +199,9 @@ def get_csv_info(filepath):
 
 
 def get_parquet_info(filepath):
+    """
+    Reads and returns the last timestamp and number of candles in a parquet file.
+    """
     last_timestamp = 0
     old_lines = 0
     try:
@@ -206,6 +215,9 @@ def get_parquet_info(filepath):
 
 
 def write_to_parquet(file, batches, base, quote, append=False):
+    """
+    Writes a batch of candles data to a parquet file.
+    """
     df = pd.concat(batches, ignore_index=True)
     df = pp.quick_clean(df)
     if append:
@@ -223,6 +235,9 @@ def write_to_parquet(file, batches, base, quote, append=False):
 
 
 def write_to_csv(file, batches, old_lines):
+    """
+    Writes a batch of candles data to a csv file.
+    """
     if len(batches) > 0:
         df = batches_to_pd(batches)
         header = not os.path.isfile(file)
@@ -232,13 +247,19 @@ def write_to_csv(file, batches, old_lines):
 
 
 def batches_to_pd(batches):
+    """
+    Converts batches of candle data to a pandas dataframe.
+    """
     df = pd.concat(batches, ignore_index=True)
     return pp.quick_clean(df)
 
 
 def csv_to_parquet(base, quote):
-    csv_filepath = f'data/{base}-{quote}.csv'
-    parquet_filepath = f'compressed/{base}-{quote}.parquet'
+    """
+    Saves a csv file given by a base and a quote to a parquet file.
+    """
+    csv_filepath = f'{CSV_PATH}/{base}-{quote}.csv'
+    parquet_filepath = f'{COMPRESSED_PATH}/{base}-{quote}.parquet'
     data = [pd.read_csv(csv_filepath)]
     write_to_parquet(parquet_filepath, data, base, quote)
 
@@ -254,11 +275,11 @@ def main():
     print(f'{datetime.now()} Got {len(all_pairs)} pairs from binance.')
 
     # randomising order helps during testing and doesn't make any difference in production
-    #random.shuffle(all_pairs)
+    random.shuffle(all_pairs)
 
     # make sure data folders exist
-    os.makedirs('data', exist_ok=True)
-    os.makedirs('compressed', exist_ok=True)
+    os.makedirs(f'{CSV_PATH}', exist_ok=True)
+    os.makedirs(f'{COMPRESSED_PATH}', exist_ok=True)
 
     # do a full update on all pairs
     n_count = len(all_pairs)
@@ -273,18 +294,17 @@ def main():
             print(f'{datetime.now()} {n}/{n_count} Wrote {new_lines} new lines to file for {base}-{quote}')
         else:
             print(f'{datetime.now()} {n}/{n_count} Already up to date with {base}-{quote}')
-        break #TODO: Remember to remove
 
     if UPLOAD_TO_KAGGLE:
         # clean the data folder and upload a new version of the dataset to kaggle
         try:
-            os.remove('compressed/.DS_Store')
+            os.remove(f'{COMPRESSED_PATH}/.DS_Store')
         except FileNotFoundError:
             pass
         write_metadata(n_count)
         yesterday = date.today() - timedelta(days=1)
-        subprocess.run(['kaggle', 'datasets', 'version', '-p', 'compressed/', '-m', f'full update of all {n_count} pairs up to {str(yesterday)}'])
-        os.remove('compressed/dataset-metadata.json')
+        subprocess.run(['kaggle', 'datasets', 'version', '-p', f'{COMPRESSED_PATH}/', '-m', f'full update of all {n_count} pairs up to {str(yesterday)}'])
+        os.remove(f'{COMPRESSED_PATH}/dataset-metadata.json')
 
 
 if __name__ == '__main__':
