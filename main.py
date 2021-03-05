@@ -31,9 +31,9 @@ BATCH_SIZE = 1000  # Number of candles to ask for in each API request.
 SHAVE_OFF_TODAY = False  # Whether to shave off candles after last midnight to equalize end-time of all datasets.
 CIRCUMVENT_CSV = True  # Whether to use the parquet files directly when updating data.
 UPLOAD_TO_KAGGLE = False  # Whether to upload the parquet files to kaggle after updating.
-
 COMPRESSED_PATH = r'C:\Users\magla\Documents\Datasets\binance_pairs'
 CSV_PATH = 'data'
+
 API_BASE = 'https://api.binance.com/api/v3/'
 
 LABELS = [
@@ -158,8 +158,9 @@ def gather_new_candles(base, quote, last_timestamp, interval='1m'):
 
         if bar is not None:
             time_covered = datetime.fromtimestamp(last_timestamp / 1000) - start_datetime
-            bar.max_value = int((datetime.now() - start_datetime).total_seconds()/60)
-            bar.update(int(time_covered.total_seconds()/60))
+            minutes_covered = int(time_covered.total_seconds()/60)
+            bar.max_value = max(int((datetime.now() - start_datetime).total_seconds()/60), minutes_covered)
+            bar.update(minutes_covered)
     if bar is not None:
         bar.finish()
     if in_pycharm: time.sleep(0.2)
