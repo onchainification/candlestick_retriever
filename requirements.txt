@@ -2,3 +2,4 @@ requests
 pandas
 pyarrow
 kaggle
+progressbar2

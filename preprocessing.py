@@ -1,7 +1,8 @@
 import os
 from datetime import date
-
+import pyarrow.parquet as pq
 import pandas as pd
+
 
 def set_dtypes(df):
     """
@@ -74,9 +75,22 @@ def quick_clean(df):
     return df
 
 
-def write_raw_to_parquet(df, full_path):
-    """takes raw df and writes a parquet to disk"""
+def append_raw_to_parquet(df, full_path, limit_to_today=True):
+    """Takes raw df and appends it to an existing parquet file. If the file does not exist, it is created."""
+    df = polish_df(df, limit_to_today)
+    try:
+        df = pd.concat([pq.read_pandas(full_path).to_pandas(), df])
+    except OSError:
+        pass
+    df.to_parquet(full_path)
 
+def write_raw_to_parquet(df, full_path, limit_to_today=True):
+    """Takes raw df and writes it to an existing parquet file, overwriting existin data. If the file does not exist,
+    it is created."""
+    df = polish_df(df, limit_to_today)
+    df.to_parquet(full_path)
+
+def polish_df(df, limit_to_today=True):
     # some candlesticks do not span a full minute
     # these points are not reliable and thus filtered
     df = df[~(df['open_time'] - df['close_time'] != -59999)]
@@ -87,30 +101,29 @@ def write_raw_to_parquet(df, full_path):
     df = set_dtypes_compressed(df)
 
     # give all pairs the same nice cut-off
-    df = df[df.index < str(date.today())]
+    if limit_to_today:
+        df = df[df.index < str(date.today())]
+    return df
 
-    df.to_parquet(full_path)
-
-
-def groom_data(dirname='data'):
+def groom_data(csv_dir):
     """go through data folder and perform a quick clean on all csv files"""
 
-    for filename in os.listdir(dirname):
+    for filename in os.listdir(csv_dir):
         if filename.endswith('.csv'):
-            full_path = f'{dirname}/{filename}'
+            full_path = csv_dir + f'/{filename}'
             quick_clean(pd.read_csv(full_path)).to_csv(full_path)
 
 
-def compress_data(dirname='data'):
+def compress_data(csv_dir, parquet_path):
     """go through data folder and rewrite csv files to parquets"""
 
-    os.makedirs('compressed', exist_ok=True)
-    for filename in os.listdir(dirname):
+    os.makedirs(parquet_path, exist_ok=True)
+    for filename in os.listdir(csv_dir):
         if filename.endswith('.csv'):
-            full_path = f'{dirname}/{filename}'
+            full_path = f'{csv_dir}/{filename}'
 
             df = pd.read_csv(full_path)
 
             new_filename = filename.replace('.csv', '.parquet')
-            new_full_path = f'compressed/{new_filename}'
+            new_full_path = parquet_path + f'/{new_filename}'
             write_raw_to_parquet(df, new_full_path)
