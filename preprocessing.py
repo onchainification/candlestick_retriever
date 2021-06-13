@@ -4,34 +4,9 @@ import pyarrow.parquet as pq
 import pandas as pd
 
 
-def set_dtypes(df):
-    """
-    set datetimeindex and convert all columns in pd.df to their proper dtype
-    assumes csv is read raw without modifications; pd.read_csv(csv_filename)"""
-
-    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-    df = df.set_index('open_time', drop=True)
-
-    df = df.astype(dtype={
-        'open': 'float64',
-        'high': 'float64',
-        'low': 'float64',
-        'close': 'float64',
-        'volume': 'float64',
-        'close_time': 'datetime64[ms]',
-        'quote_asset_volume': 'float64',
-        'number_of_trades': 'int64',
-        'taker_buy_base_asset_volume': 'float64',
-        'taker_buy_quote_asset_volume': 'float64',
-        'ignore': 'float64'
-    })
-
-    return df
-
-
 def set_dtypes_compressed(df):
-    """Create a `DatetimeIndex` and convert all critical columns in pd.df to a dtype with low
-    memory profile. Assumes csv is read raw without modifications; `pd.read_csv(csv_filename)`."""
+    """Create a `DatetimeIndex` on a raw pd.df and convert all critical columns
+    to a dtype with low memory profile."""
 
     df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
     df = df.set_index('open_time', drop=True)
@@ -58,8 +33,10 @@ def assert_integrity(df):
     assert df['open_time'].duplicated().any() == False
 
 
-def quick_clean(df):
-    """clean a raw dataframe"""
+def clean_raw(df, limit_to_today=True):
+    """Clean a raw dataframe from duplicates, sort by timestamp, filter
+    incomplete candles, drop redundant columns, set the correct dtype and
+    (optionally) cut off the data for the current day."""
 
     # drop dupes
     dupes = df['open_time'].duplicated().sum()
@@ -69,28 +46,6 @@ def quick_clean(df):
     # sort by timestamp, oldest first
     df.sort_values(by=['open_time'], ascending=False)
 
-    # just a doublcheck
-    assert_integrity(df)
-
-    return df
-
-
-def append_raw_to_parquet(df, full_path, limit_to_today=True):
-    """Takes raw df and appends it to an existing parquet file. If the file does not exist, it is created."""
-    df = polish_df(df, limit_to_today)
-    try:
-        df = pd.concat([pq.read_pandas(full_path).to_pandas(), df])
-    except OSError:
-        pass
-    df.to_parquet(full_path)
-
-def write_raw_to_parquet(df, full_path, limit_to_today=True):
-    """Takes raw df and writes it to an existing parquet file, overwriting existin data. If the file does not exist,
-    it is created."""
-    df = polish_df(df, limit_to_today)
-    df.to_parquet(full_path)
-
-def polish_df(df, limit_to_today=True):
     # some candlesticks do not span a full minute
     # these points are not reliable and thus filtered
     df = df[~(df['open_time'] - df['close_time'] != -59999)]
@@ -98,32 +53,25 @@ def polish_df(df, limit_to_today=True):
     # `close_time` column has become redundant now, as is the column `ignore`
     df = df.drop(['close_time', 'ignore'], axis=1)
 
+    # just a doublcheck on nans and duplicate timestamps
+    assert_integrity(df)
+
     df = set_dtypes_compressed(df)
 
     # give all pairs the same nice cut-off
     if limit_to_today:
         df = df[df.index < str(date.today())]
+
     return df
 
-def groom_data(csv_dir):
-    """go through data folder and perform a quick clean on all csv files"""
 
-    for filename in os.listdir(csv_dir):
-        if filename.endswith('.csv'):
-            full_path = csv_dir + f'/{filename}'
-            quick_clean(pd.read_csv(full_path)).to_csv(full_path)
-
-
-def compress_data(csv_dir, parquet_path):
-    """go through data folder and rewrite csv files to parquets"""
-
-    os.makedirs(parquet_path, exist_ok=True)
-    for filename in os.listdir(csv_dir):
-        if filename.endswith('.csv'):
-            full_path = f'{csv_dir}/{filename}'
-
-            df = pd.read_csv(full_path)
-
-            new_filename = filename.replace('.csv', '.parquet')
-            new_full_path = parquet_path + f'/{new_filename}'
-            write_raw_to_parquet(df, new_full_path)
+def write_raw_to_parquet(df, full_path, limit_to_today=True, append=False):
+    """Takes raw df and writes it to a parquet file, either overwriting existing
+    data or appending to it. If the file does not exist, it is created."""
+    df = clean_raw(df, limit_to_today)
+    if append:
+        try:
+            df = pd.concat([pd.read_parquet(full_path), df])
+        except OSError:
+            pass
+    df.to_parquet(full_path)
