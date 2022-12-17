@@ -1,3 +1,9 @@
+import json
+import os
+import subprocess
+from datetime import date, timedelta
+
+
 METADATA = {
     "id": "jorijnsmit/binance-full-history",
     "title": "Binance Full History",

@@ -1,6 +1,5 @@
-import os
 from datetime import date
-import pyarrow.parquet as pq
+
 import pandas as pd
 
 

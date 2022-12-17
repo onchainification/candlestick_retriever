@@ -10,18 +10,16 @@ file.
 __author__ = "GOSUTO.AI"
 __version__ = "2.0.0"
 
-import json
 import os
 import random
-import subprocess
 import time
-from datetime import date, datetime, timedelta
+from datetime import datetime
 
-from progressbar import ProgressBar
-import pyarrow.parquet as pq
-import requests
 import pandas as pd
 import preprocessing as pp
+import requests
+from progressbar import ProgressBar
+
 
 # check whether script being run in PyCharm environment
 IN_PYCHARM = "PYCHARM_HOSTED" in os.environ
@@ -162,7 +160,7 @@ def all_candles_to_parquet(base, quote, interval="1m", n=0, n_count=0):
     """
     filepath = f"{DATA_PATH}/{base}-{quote}.parquet"
 
-    last_timestamp, old_lines = get_parquet_info(filepath)
+    last_timestamp, _ = get_parquet_info(filepath)
     new_candle_batches = gather_new_candles(
         base, quote, last_timestamp, interval, n, n_count
     )
@@ -185,7 +183,7 @@ def get_parquet_info(filepath):
     return last_timestamp, old_lines
 
 
-def write_to_parquet(file, batches, base, quote, append=False):
+def write_to_parquet(file, batches, append=False):
     """Write batches of candle data to a parquet file."""
     df = pd.concat(batches, ignore_index=True)
     pp.write_raw_to_parquet(df, file, SHAVE_OFF_TODAY, append=append)
