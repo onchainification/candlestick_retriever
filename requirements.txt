@@ -1,6 +1,8 @@
-requests
-pandas
-pyarrow
 kaggle
+pandas
 progressbar2
+pyarrow
+requests
+
+# dev: linting
 black
