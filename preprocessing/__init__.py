@@ -4,9 +4,10 @@ import pandas as pd
 
 
 def set_dtypes_compressed(df):
-    """Create a `DatetimeIndex` on a raw pd.df and convert all critical columns
-    to a dtype with low memory profile."""
-
+    """
+    Create a `DatetimeIndex` on a raw pd.df and convert all critical columns
+    to a dtype with low memory profile.
+    """
     df["open_time"] = pd.to_datetime(df["open_time"], unit="ms")
     df = df.set_index("open_time", drop=True)
 
@@ -28,17 +29,19 @@ def set_dtypes_compressed(df):
 
 
 def assert_integrity(df):
-    """make sure no rows have empty cells or duplicate timestamps exist"""
-
+    """
+    Make sure no rows have empty cells or duplicate timestamps exist.
+    """
     assert df.isna().all(axis=1).any() == False
     assert df["open_time"].duplicated().any() == False
 
 
 def clean_raw(df, limit_to_today=True):
-    """Clean a raw dataframe from duplicates, sort by timestamp, filter
+    """
+    Clean a raw dataframe from duplicates, sort by timestamp, filter
     incomplete candles, drop redundant columns, set the correct dtype and
-    (optionally) cut off the data for the current day."""
-
+    (optionally) cut off the data for the current day.
+    """
     # drop dupes
     dupes = df["open_time"].duplicated().sum()
     if dupes > 0:
@@ -67,8 +70,10 @@ def clean_raw(df, limit_to_today=True):
 
 
 def write_raw_to_parquet(df, full_path, limit_to_today=True, append=False):
-    """Takes raw df and writes it to a parquet file, either overwriting existing
-    data or appending to it. If the file does not exist, it is created."""
+    """
+    Takes raw df and writes it to a parquet file, either overwriting existing
+    data or appending to it. If the file does not exist, it is created.
+    """
     df = clean_raw(df, limit_to_today)
     if append:
         try:

@@ -4,6 +4,7 @@ import subprocess
 from datetime import date, timedelta
 
 
+COMPRESSED_PATH = "compressed"
 METADATA = {
     "id": "jorijnsmit/binance-full-history",
     "title": "Binance Full History",
@@ -16,8 +17,9 @@ METADATA = {
 
 
 def write_metadata(n_count):
-    """Write the metadata file dynamically so we can include a pair count."""
-
+    """
+    Write the metadata file dynamically so we can include a pair count.
+    """
     METADATA[
         "subtitle"
     ] = f"1 minute candlesticks for all {n_count} cryptocurrency pairs"

@@ -49,11 +49,11 @@ LABELS = [
 
 
 def get_batch(symbol, interval="1m", start_time=0, limit=1000):
-    """Use a GET request to retrieve a batch of candlesticks. Process the JSON
+    """
+    Use a GET request to retrieve a batch of candlesticks. Process the JSON
     into a pandas dataframe and return it. If not successful, return an empty
     dataframe.
     """
-
     params = {
         "symbol": symbol,
         "interval": interval,
@@ -83,7 +83,8 @@ def get_batch(symbol, interval="1m", start_time=0, limit=1000):
 
 
 def gather_new_candles(base, quote, last_timestamp, interval="1m", n=0, n_count=0):
-    """Gather all candlesticks available, starting from the last timestamp
+    """
+    Gather all candlesticks available, starting from the last timestamp
     loaded from disk or from beginning of time. Stop if the timestamp that comes
     back from the api is the same as the last one.
     """
@@ -156,7 +157,8 @@ def gather_new_candles(base, quote, last_timestamp, interval="1m", n=0, n_count=
 
 
 def all_candles_to_parquet(base, quote, interval="1m", n=0, n_count=0):
-    """Collect a list of candlestick batches with all candlesticks of a trading
+    """
+    Collect a list of candlestick batches with all candlesticks of a trading
     pair, concat into a dataframe and write it to parquet.
     """
     filepath = f"{DATA_PATH}/{base}-{quote}.parquet"
@@ -169,7 +171,8 @@ def all_candles_to_parquet(base, quote, interval="1m", n=0, n_count=0):
 
 
 def get_parquet_info(filepath):
-    """Reads and returns the last timestamp and number of candles in a parquet
+    """
+    Reads and returns the last timestamp and number of candles in a parquet
     file.
     """
     last_timestamp = 0
@@ -185,14 +188,18 @@ def get_parquet_info(filepath):
 
 
 def write_to_parquet(file, batches, append=False):
-    """Write batches of candle data to a parquet file."""
+    """
+    Write batches of candle data to a parquet file.
+    """
     df = pd.concat(batches, ignore_index=True)
     pp.write_raw_to_parquet(df, file, SHAVE_OFF_TODAY, append=append)
     return len(df.index)
 
 
 def main():
-    """Main loop; loop over all currency pairs that exist on the exchange."""
+    """
+    Main loop; loop over all currency pairs that exist on the exchange.
+    """
     # get all pairs currently available
     all_symbols = pd.DataFrame(
         requests.get(f"{API_BASE}exchangeInfo").json()["symbols"]
