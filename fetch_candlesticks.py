@@ -164,7 +164,7 @@ def all_candles_to_parquet(base, quote, interval="1m", n=0, n_count=0):
     new_candle_batches = gather_new_candles(
         base, quote, last_timestamp, interval, n, n_count
     )
-    return write_to_parquet(filepath, new_candle_batches, base, quote, append=True)
+    return write_to_parquet(filepath, new_candle_batches, append=True)
 
 
 def get_parquet_info(filepath):
