@@ -3,3 +3,4 @@ pandas
 pyarrow
 kaggle
 progressbar2
+black
