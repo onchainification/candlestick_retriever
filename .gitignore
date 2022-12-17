@@ -5,3 +5,6 @@ compressed*
 # (macOS) junk files
 .DS_Store
 __pycache__
+
+# pipenv
+Pipfile*
