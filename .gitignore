@@ -1,7 +1,7 @@
-# ignore the data directories
-data/*
-compressed/*
+# ignore the data directory
+data*
+compressed*
 
-# macOS junk files
+# (macOS) junk files
 .DS_Store
 __pycache__
