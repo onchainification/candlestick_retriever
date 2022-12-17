@@ -16,9 +16,10 @@ import time
 from datetime import datetime
 
 import pandas as pd
-import preprocessing as pp
 import requests
 from progressbar import ProgressBar
+
+import preprocessing as pp
 
 
 # check whether script being run in PyCharm environment
@@ -144,7 +145,7 @@ def gather_new_candles(base, quote, last_timestamp, interval="1m", n=0, n_count=
             time_covered = (
                 datetime.fromtimestamp(last_timestamp / 1000) - start_datetime
             )
-            minutes_covered = int(time_covered.total_seconds() / 60)
+            minutes_covered = int(time_covered.total_seconds() / 60) + 1
             bar.max_value = max(bar.max_value, minutes_covered)
             bar.update(minutes_covered)
     if bar is not None:
