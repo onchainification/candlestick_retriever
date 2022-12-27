@@ -71,10 +71,6 @@ def get_batch(symbol, interval="1m", start_time=0, limit=1000):
         print("Timeout, Cooling down for 5 min...")
         time.sleep(5 * 60)
         return get_batch(symbol, interval, start_time, limit)
-    except requests.exceptions.ConnectionResetError:
-        print("Connection reset by peer, Cooling down for 5 min...")
-        time.sleep(5 * 60)
-        return get_batch(symbol, interval, start_time, limit)
 
     if response.status_code == 200:
         return pd.DataFrame(response.json(), columns=LABELS)
@@ -128,7 +124,7 @@ def gather_new_candles(base, quote, last_timestamp, interval="1m", n=0, n_count=
         if first_read:
             start_datetime = datetime.fromtimestamp(new_batch["open_time"][0] / 1000)
             missing_data_timedelta = datetime.now() - start_datetime
-            total_minutes_of_data = int(missing_data_timedelta.total_seconds() / 60)
+            total_minutes_of_data = int(missing_data_timedelta.total_seconds() / 60) + 1
             if total_minutes_of_data > 1440:
                 missing_data_timedelta = str(missing_data_timedelta).split(",")[0]
             else:
